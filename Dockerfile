@@ -1,31 +1,21 @@
-# Base Image
-FROM python:3.10-slim
+FROM node:18-alpine
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Set work directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Copy package files
+COPY package*.json ./
 
-# Copy requirements file
-COPY requirements.txt .
+# Install dependencies
+RUN npm install
 
-# Install Python dependencies
-RUN pip install --upgrade pip \
-    && pip install -r requirements.txt
-
-# Copy project files
+# Copy source code
 COPY . .
 
-# Expose Django port
-EXPOSE 8000
+# Build the app (if using React/Vite)
+RUN npm run build
 
-# Run migrations & start server
-CMD ["sh", "-c", "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"]
+# Expose port
+EXPOSE 3000
+
+# Start the app
+CMD ["npm", "start"]
