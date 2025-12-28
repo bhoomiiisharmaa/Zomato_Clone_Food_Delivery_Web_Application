@@ -1,55 +1,101 @@
 pipeline {
-    agent any
-
+    agent { label 'slave1' }
+    
+    tools {
+        jdk 'JAVA'
+        nodejs 'nodejs'
+    }
+    
     environment {
-        IMAGE_NAME = "zomato-django-app"
-        CONTAINER_NAME = "zomato_app"
+        SCANNER_HOME = tool 'sonar-scanner'
+        DOCKER_IMAGE = 'bhoomisharma333/zomato-clone'
     }
-
+    
     stages {
-
-        stage('Clone Repository') {
+        stage('Clean Workspace') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/adityaglobe/Zomato_Clone_Food_Delivery_Web_Application.git'
+                cleanWs()
             }
         }
-
-        stage('Build Docker Image') {
+        
+        stage('Checkout') {
             steps {
-                sh '''
-                docker build -t $IMAGE_NAME .
-                '''
+                git branch: 'main', 
+                    url: 'https://github.com/bhoomiiisharmaa/Zomato_Clone_Food_Delivery_Web_Application'
             }
         }
-
-        stage('Stop Existing Container') {
+        
+        stage('Install Dependencies') {
             steps {
-                sh '''
-                docker stop $CONTAINER_NAME || true
-                docker rm $CONTAINER_NAME || true
-                '''
+                sh 'npm install'
             }
         }
-
-        stage('Run Docker Container') {
+        
+        stage('SonarQube Analysis') {
             steps {
-                sh '''
-                docker run -d \
-                --name $CONTAINER_NAME \
-                -p 8000:8000 \
-                $IMAGE_NAME
-                '''
+                withSonarQubeEnv('sonar') {
+                    sh '''
+                        $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectKey=zomato-clone \
+                        -Dsonar.projectName="Zomato Clone" \
+                        -Dsonar.sources=.
+                    '''
+                }
+            }
+        }
+        
+        stage('OWASP Dependency Check') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', 
+                                odcInstallation: 'DC'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        
+        stage('Trivy FS Scan') {
+            steps {
+                sh 'trivy fs . > trivy-fs-report.txt'
+            }
+        }
+        
+        stage('Docker Build') {
+            steps {
+                sh 'docker build -t $DOCKER_IMAGE:$BUILD_NUMBER .'
+                sh 'docker tag $DOCKER_IMAGE:$BUILD_NUMBER $DOCKER_IMAGE:latest'
+            }
+        }
+        
+        stage('Trivy Image Scan') {
+            steps {
+                sh 'trivy image $DOCKER_IMAGE:latest > trivy-image-report.txt'
+            }
+        }
+        
+        stage('Docker Push') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+                    sh 'docker push $DOCKER_IMAGE:$BUILD_NUMBER'
+                    sh 'docker push $DOCKER_IMAGE:latest'
+                }
+            }
+        }
+        
+        stage('Deploy to Container') {
+            steps {
+                sh 'docker rm -f zomato || true'
+                sh 'docker run -d --name zomato -p 3000:3000 $DOCKER_IMAGE:latest'
             }
         }
     }
-
+    
     post {
-        success {
-            echo "✅ Zomato Django App deployed successfully!"
-        }
-        failure {
-            echo "❌ Deployment failed. Check logs."
+        always {
+            sh 'docker logout || true'
         }
     }
 }
